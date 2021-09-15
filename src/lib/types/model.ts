@@ -195,6 +195,8 @@ export interface IAddonConfig {
 export interface ICreateEvent {
     type: string;
     createdBy: string;
+    project?: string;
+    environment?: string;
     data?: any;
     tags?: ITag[];
 }
