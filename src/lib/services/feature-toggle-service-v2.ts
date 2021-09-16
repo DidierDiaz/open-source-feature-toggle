@@ -10,11 +10,14 @@ import {
     FEATURE_ARCHIVED,
     FEATURE_CREATED,
     FEATURE_DELETED,
+    FEATURE_METADATA_UPDATED,
     FEATURE_REVIVED,
     FEATURE_STALE_OFF,
     FEATURE_STALE_ON,
+    FEATURE_STRATEGY_ADD,
+    FEATURE_STRATEGY_REMOVE,
+    FEATURE_STRATEGY_UPDATE,
     FEATURE_UPDATED,
-    FEATURE_METADATA_UPDATED,
 } from '../types/events';
 import { GLOBAL_ENV } from '../types/environment';
 import NotFoundError from '../error/notfound-error';
@@ -88,16 +91,11 @@ class FeatureToggleServiceV2 {
         this.featureEnvironmentStore = featureEnvironmentStore;
     }
 
-    /*
-    TODO after 4.1.0 release:
-    - add FEATURE_STRATEGY_ADD event
-    - add FEATURE_STRATEGY_REMOVE event
-    - add FEATURE_STRATEGY_UPDATE event
-    */
     async createStrategy(
         strategyConfig: Omit<IStrategyConfig, 'id'>,
         projectId: string,
         featureName: string,
+        userName: string,
         environment: string = GLOBAL_ENV,
     ): Promise<IStrategyConfig> {
         try {
@@ -110,12 +108,20 @@ class FeatureToggleServiceV2 {
                     featureName,
                     environment,
                 });
-            return {
+            const data = {
                 id: newFeatureStrategy.id,
                 name: newFeatureStrategy.strategyName,
                 constraints: newFeatureStrategy.constraints,
                 parameters: newFeatureStrategy.parameters,
             };
+            await this.eventStore.store({
+                type: FEATURE_STRATEGY_ADD,
+                project: projectId,
+                createdBy: userName,
+                environment,
+                data,
+            });
+            return data;
         } catch (e) {
             if (e.code === FOREIGN_KEY_VIOLATION) {
                 throw new BadDataError(
@@ -125,6 +131,12 @@ class FeatureToggleServiceV2 {
             throw e;
         }
     }
+    /*
+    TODO after 4.1.0 release:
+    - add FEATURE_STRATEGY_ADD event
+    - add FEATURE_STRATEGY_REMOVE event
+    - add FEATURE_STRATEGY_UPDATE event
+    */
 
     /**
      * PUT /api/admin/projects/:projectId/features/:featureName/strategies/:strategyId ?
@@ -138,6 +150,9 @@ class FeatureToggleServiceV2 {
     // TODO: verify projectId is not changed from URL!
     async updateStrategy(
         id: string,
+        environment: string,
+        project: string,
+        userName: string,
         updates: Partial<IFeatureStrategy>,
     ): Promise<IStrategyConfig> {
         const existingStrategy = await this.featureStrategiesStore.get(id);
@@ -146,12 +161,20 @@ class FeatureToggleServiceV2 {
                 id,
                 updates,
             );
-            return {
+            const data = {
                 id: strategy.id,
                 name: strategy.strategyName,
                 constraints: strategy.constraints || [],
                 parameters: strategy.parameters,
             };
+            await this.eventStore.store({
+                type: FEATURE_STRATEGY_UPDATE,
+                project,
+                environment,
+                createdBy: userName,
+                data,
+            });
+            return data;
         }
         throw new NotFoundError(`Could not find strategy with id ${id}`);
     }
@@ -161,6 +184,9 @@ class FeatureToggleServiceV2 {
         id: string,
         name: string,
         value: string | number,
+        userName: string,
+        project: string,
+        environment: string,
     ): Promise<IStrategyConfig> {
         const existingStrategy = await this.featureStrategiesStore.get(id);
         if (existingStrategy.id === id) {
@@ -169,12 +195,20 @@ class FeatureToggleServiceV2 {
                 id,
                 existingStrategy,
             );
-            return {
+            const data = {
                 id: strategy.id,
                 name: strategy.strategyName,
                 constraints: strategy.constraints || [],
                 parameters: strategy.parameters,
             };
+            await this.eventStore.store({
+                type: FEATURE_STRATEGY_UPDATE,
+                project,
+                environment,
+                createdBy: userName,
+                data,
+            });
+            return data;
         }
         throw new NotFoundError(`Could not find strategy with id ${id}`);
     }
@@ -187,8 +221,22 @@ class FeatureToggleServiceV2 {
      * @param id
      * @param updates
      */
-    async deleteStrategy(id: string): Promise<void> {
-        return this.featureStrategiesStore.delete(id);
+    async deleteStrategy(
+        id: string,
+        userName: string,
+        project: string = 'default',
+        environment: string = GLOBAL_ENV,
+    ): Promise<void> {
+        await this.featureStrategiesStore.delete(id);
+        await this.eventStore.store({
+            type: FEATURE_STRATEGY_REMOVE,
+            project,
+            environment,
+            createdBy: userName,
+            data: {
+                id,
+            },
+        });
     }
 
     async getStrategiesForEnvironment(
@@ -517,6 +565,7 @@ class FeatureToggleServiceV2 {
                 data,
                 tags,
                 project: projectId,
+                environment,
             });
             return feature;
         }
